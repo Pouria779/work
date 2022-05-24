@@ -1,0 +1,413 @@
+<template>
+    <b-container fluid>
+        <b-row>
+            <b-col>
+                <BaseHeadline>
+                    Bauwerke
+                    <template slot="buttons">
+                        <b-btn
+                            v-if="$store.state.permissions.location_permission >= 20"
+                            :to="{name: 'CreateBuilding'}"
+                            variant="primary"
+                        >
+                            Bauwerk anlegen
+                        </b-btn>
+                    </template>
+                </BaseHeadline>
+            </b-col>
+        </b-row>
+        <Breadcrumb/>
+        <b-row>
+            <b-col>
+                <b-tabs :lazy="true">
+                    <b-tab class="pt-1" title="Übersicht">
+                        <TileOverview :items="buildings" :options="tileOptions">
+                            <template slot="image" slot-scope="{ item }">
+                                <nuxt-link :to="{name: 'Building',params: { sbid: item.building_id }}">
+                                    <b-card-img
+                                        :src="`/api/tenant/${$route.params['cdb']}/storage/${item.revision_image}?size=275x275`"
+                                        v-if="item.revision_image"
+                                    />
+                                    <b-card-img
+                                        src="../../assets/img/placeholder.jpg"
+                                        v-else
+                                    />
+                                </nuxt-link>
+                            </template>
+                            <template slot-scope="{ item }">
+                                <p>{{ item.identifier }}</p>
+                                <b-button
+                                    variant="primary"
+                                    :to="{
+                    name: 'Building',
+                    params: { sbid: item.building_id }
+                  }"
+                                    v-b-tooltip.hover="'Bauwerk anzeigen'"
+                                >
+                                    <font-awesome-icon color="#ffffff" icon="building"/>
+                                </b-button>
+                            </template>
+                        </TileOverview>
+                    </b-tab>
+                    <b-tab class="pt-3" title="Liste">
+                        <ListOverview :items="buildings" :fields="tableFields">
+                            <template slot="actions" slot-scope="{ row }">
+                                <b-button
+                                    size="sm"
+                                    variant="primary"
+                                    :to="{
+                    name: 'Building',
+                    params: { sbid: row.item.building_id }
+                  }"
+                                    v-b-tooltip.hover="'Bauwerk anzeigen'"
+                                >
+                                    <font-awesome-icon color="#ffffff" icon="building"/>
+                                </b-button>
+                            </template>
+                        </ListOverview>
+                    </b-tab>
+                    <b-tab class="pt-4" title="Karte">
+                        <StructurebooksMap :items="marker" :buildings="buildings" :location="location"/>
+                    </b-tab>
+                </b-tabs>
+            </b-col>
+        </b-row>
+    </b-container>
+</template>
+
+<script>
+import TileOverview from '@/components/overviews/TileOverview';
+import ListOverview from '@/components/overviews/ListOverview';
+import Breadcrumb from '~/components/navigation/Breadcrumb';
+import BaseHeadline from '@/components/Base/BaseHeadline';
+import StructurebooksMap from '@/components/maps/StructurebooksMap';
+
+export default {
+    middleware: ['fetch-param-data'],
+    components: {
+        TileOverview,
+        ListOverview,
+        StructurebooksMap,
+        BaseHeadline,
+        Breadcrumb
+    },
+    data() {
+        return {
+            buildings: [],
+            tileOptions: {
+                title: 'structure'
+            },
+            tableFields: [
+                {key: 'construction_number', label: 'Lfd.-Nr', sortable: true},
+                {key: 'identifier', label: 'Kennung', sortable: true},
+                {key: 'structure', label: 'Bauwerk', sortable: true},
+                {key: 'revision', label: 'Revision', sortable: true},
+                {
+                    key: 'report_type',
+                    label: 'Letzte Prüfung' +
+                        ' Prüfungsart',
+                    sortable: true,
+                    formatter: (value, key, item) =>
+                        this.getReportType(
+                            this.buildings.find(building => building.building_id === item.building_id),
+                            value
+                        )
+                },
+                {
+                    key: 'start_date',
+                    label: 'Letzte Prüfung' + ' Prüfungsdatum',
+                    sortable: true,
+                    formatter: value =>
+                        new Date(value).toLocaleDateString('de-DE', {
+                            year: 'numeric',
+                            month: '2-digit'
+                        })
+                },
+                {
+                    key: 'building_condition',
+                    label: 'Letzte Prüfung' + ' Zustand',
+                    sortable: true,
+                    formatter: value =>
+                        value > 0 ? (this.ratings.find(rating => rating.value == value) || {text: ''}).text : ''
+                },
+                {
+                    key: 'next_report_type',
+                    label: 'Nächste Prüfung' + ' Prüfungsart',
+                    formatter: (value, key, item) =>
+                        this.getNextReportType(
+                            this.buildings.find(building => building.building_id === item.building_id),
+                            value
+                        )
+                },
+                {
+                    key: 'damage_class',
+                    label: 'Nächste Prüfung' + ' Prüfungsdatum',
+                    formatter: (value, key, item) =>
+                        this.getNextExam(
+                            this.buildings.find(building => building.building_id === item.building_id),
+                            value
+                        )
+                },
+                {key: 'actions', label: 'Aktionen'}
+            ],
+            ratings: [
+                {text: 'sehr gut', value: '1'},
+                {text: 'gut', value: '2'},
+                {text: 'befriedigend', value: '3'},
+                {text: 'ausreichend', value: '4'},
+                {text: 'nicht ausreichend', value: '5'},
+                {text: 'ungenügend', value: '6'}
+            ]
+        };
+    },
+    async asyncData({app, route}) {
+        const [{data: location}, {data: buildings}, {data: marker}, {data: reports}] = await Promise.all([
+            app.$axios.get(`/location/${route.params['id']}`),
+            app.$axios.get(`/building/location/${route.params['id']}/display`),
+            app.$axios.get(`/marker/location/${route.params['id']}`),
+            app.$axios.get(`/inspection_report/location/display/${route.params['id']}`),
+        ]);
+
+        return {
+            location,
+            buildings,
+            marker,
+            reports
+        };
+    },
+    methods: {
+        getReportType(building, reportType) {
+            if (!building) return '';
+            let inspections = '';
+            for (var i = 0; i < JSON.parse(building.policies).types.length; i++)
+                if (JSON.parse(building.policies).types[i]) {
+                    if (JSON.parse(building.policies).types[i].name == building.booktype) {
+                        if (JSON.parse(building.policies).types[i].policies[0].inspections[reportType])
+                            inspections = JSON.parse(building.policies).types[i].policies[0].inspections[reportType].name;
+                    }
+                }
+
+            return inspections;
+        },
+        getNextExam(building, damageClass) {
+            const building_reports = [];
+            const repotTypes = [];
+            const high_priority_repotTypes = [];
+            if (!building) return '';
+            var cycle = null;
+            var today = new Date();
+            for (var n = 0; n < this.reports.length; n++) {
+                if (this.reports[n].building_id == building.building_id) {
+                    let types = JSON.parse(building.policies).types;
+                    for (var i = 0; i < types.length; i++) {
+                        if (types[i] && types[i].name == building.booktype) {
+                            const inspections = JSON.parse(building.policies).types[i].policies[0].inspections;
+                            for (var j = 0; j < inspections.length; j++) {
+                                if (inspections[j].cycle > 0) {
+                                    repotTypes[j] = [];
+                                    repotTypes[j].push(inspections[j].name);
+                                    repotTypes[j].push(inspections[j].cycle);
+                                    repotTypes[j].push(j);
+                                }
+                                if (inspections[j].damage_classes) {
+                                    let damage_classes = inspections[j].damage_classes;
+                                    for (var a = 0; a < damage_classes.length; a++) {
+                                        if (damage_classes[a].name == damageClass && damage_classes[a].cycle > 0) {
+                                            repotTypes[j] = [];
+                                            repotTypes[j].push(inspections[j].name);
+                                            repotTypes[j].push(damage_classes[a].cycle);
+                                            repotTypes[j].push(j);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    building_reports.push(this.reports[n]);
+                }
+            }
+            building_reports.sort(function (a, b) {
+                return a.inspection_report_id - b.inspection_report_id
+            });
+            repotTypes.sort(function (a, b) {
+                return parseFloat(b[1]) - parseFloat(a[1]);
+            });
+            for (var i = 0; i < repotTypes.length; i++) {
+                high_priority_repotTypes.push(repotTypes[i][2]);
+            }
+            // repotTypes (just repotTypes with cycle > 0) example: [ [ "Eingehende Überprüfung", 12, 1 ], [ "Inspektion", 4, 0 ], [ "Begehung", 2, 2 ] ]
+            //high_priority_repotTypes example: [1,0,2]
+
+            let arr = [];
+            let hasCycle = [];
+            arr = building_reports.filter(br => br.report_type == high_priority_repotTypes[0]);
+            //condition 1: is there a report_type with high priority?
+            //Determine the report with high priority and largest Id.
+            if(arr.length > 0){
+                for(var n = 1; n < 30; n++){
+                    for(var i = 0; i < repotTypes.length; i++){
+                       if(n % repotTypes[i][1] == 0){
+                           cycle = repotTypes[i][1];
+                           var d = new Date(arr[arr.length-1].start_date);
+                           var year = d.getFullYear();
+                           var month = d.getMonth();
+                           var day = d.getDate();
+                           var c = new Date(year + cycle, month, day);
+                           if (c >= today) {
+                               return c.toLocaleDateString('de-DE', {
+                                   year: 'numeric',
+                                   month: '2-digit'
+                               });
+                           }
+                       }
+                    }
+                }
+            }else{
+                //Determine the report with largest Id.
+                hasCycle = high_priority_repotTypes.filter(hpr => hpr == building_reports[building_reports.length-1].report_type);
+                //condition 2: report has cycle > 0
+                if(hasCycle.length > 0){
+                    for (var i = 0; i < repotTypes.length; i++) {
+                    if(building_reports[building_reports.length-1].report_type == repotTypes[i][2])
+                        cycle = repotTypes[i][1];
+                        var d = new Date(building_reports[building_reports.length-1].start_date);
+                        var year = d.getFullYear();
+                        var month = d.getMonth();
+                        var day = d.getDate();
+                        var c = new Date(year + cycle, month, day);
+                        if (c >= today) {
+                            return c.toLocaleDateString('de-DE', {
+                                year: 'numeric',
+                                month: '2-digit'
+                            });
+                        }
+                    }
+                }else{
+                    //condition 3: report has no cycle or cycle = 0
+                    if(building_reports.length > 0) {
+                        cycle = 2;
+                        var d = new Date(building_reports[building_reports.length-1].start_date);
+                        var year = d.getFullYear();
+                        var month = d.getMonth();
+                        var day = d.getDate();
+                        var c = new Date(year + cycle, month, day);
+                        if (c >= today) {
+                            return c.toLocaleDateString('de-DE', {
+                                year: 'numeric',
+                                month: '2-digit'
+                            });
+                        }
+
+                    }
+                }
+            }
+        },
+        getNextReportType(building) {
+            const building_reports = [];
+            const repotTypes = [];
+            const high_priority_repotTypes = [];
+            let damageClass = building.damage_class;
+            if (!building) return '';
+            var cycle = null;
+            var today = new Date();
+            for (var n = 0; n < this.reports.length; n++) {
+                if (this.reports[n].building_id == building.building_id) {
+                    let types = JSON.parse(building.policies).types;
+                    for (var i = 0; i < types.length; i++) {
+                        if (types[i] && types[i].name == building.booktype) {
+                            const inspections = JSON.parse(building.policies).types[i].policies[0].inspections;
+                            for (var j = 0; j < inspections.length; j++) {
+                                if (inspections[j].cycle > 0) {
+                                    repotTypes[j] = [];
+                                    repotTypes[j].push(inspections[j].name);
+                                    repotTypes[j].push(inspections[j].cycle);
+                                    repotTypes[j].push(j);
+                                }
+                                if (inspections[j].damage_classes) {
+                                    let damage_classes = inspections[j].damage_classes;
+                                    for (var a = 0; a < damage_classes.length; a++) {
+                                        if (damage_classes[a].name == damageClass && damage_classes[a].cycle > 0) {
+                                            repotTypes[j] = [];
+                                            repotTypes[j].push(inspections[j].name);
+                                            repotTypes[j].push(damage_classes[a].cycle);
+                                            repotTypes[j].push(j);
+                                        }
+                                    }
+                                }
+
+                            }
+                        }
+                    }
+                    building_reports.push(this.reports[n]);
+                }
+            }
+            building_reports.sort(function (a, b) {
+                return a.inspection_report_id - b.inspection_report_id
+            });
+            repotTypes.sort(function (a, b) {
+                return parseFloat(b[1]) - parseFloat(a[1]);
+            });
+            for (var i = 0; i < repotTypes.length; i++) {
+                high_priority_repotTypes.push(repotTypes[i][2]);
+            }
+            // repotTypes (just repotTypes with cycle > 0) example: [ [ "Eingehende Überprüfung", 12, 1 ], [ "Inspektion", 4, 0 ], [ "Begehung", 2, 2 ] ]
+            //high_priority_repotTypes example: [1,0,2]
+
+            let arr = [];
+            let hasCycle = [];
+            arr = building_reports.filter(br => br.report_type == high_priority_repotTypes[0]);
+            if(arr.length > 0){
+                //condition 1: is there a report_type with high priority?
+                //Determine the report with high priority and largest Id.
+                for(var n = 1; n < 30; n++){
+                    for(var i = 0; i < repotTypes.length; i++){
+                        if(n % repotTypes[i][1] == 0){
+                            cycle = repotTypes[i][1];
+                            var d = new Date(arr[arr.length-1].start_date);
+                            var year = d.getFullYear();
+                            var month = d.getMonth();
+                            var day = d.getDate();
+                            var c = new Date(year + cycle, month, day);
+                            if (c >= today) {
+                                return repotTypes[i][0];
+                            }
+                        }
+                    }
+                }
+            }else {
+                //Determine the report with largest Id.
+                hasCycle = high_priority_repotTypes.filter(hpr => hpr == building_reports[building_reports.length-1].report_type);
+                if (hasCycle.length > 0) {
+                    //condition 2: report has cycle > 0
+                    for (var i = 0; i < repotTypes.length; i++) {
+                        if (building_reports[building_reports.length-1].report_type == repotTypes[i][2])
+                        cycle = repotTypes[i][1];
+                        var d = new Date(building_reports[building_reports.length-1].start_date);
+                        var year = d.getFullYear();
+                        var month = d.getMonth();
+                        var day = d.getDate();
+                        var c = new Date(year + cycle, month, day);
+                        if (c >= today) {
+                            return repotTypes[0][0];
+                        }
+                    }
+                } else {
+                    //condition 3: report has no cycle or cycle = 0
+                    if(building_reports.length > 0){
+                        cycle = 2;
+                        var d = new Date(building_reports[building_reports.length-1].start_date);
+                        var year = d.getFullYear();
+                        var month = d.getMonth();
+                        var day = d.getDate();
+                        var c = new Date(year + cycle, month, day);
+                        if (c >= today) {
+                            return repotTypes[0][0];
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+};
+</script>
