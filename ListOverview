@@ -1,0 +1,55 @@
+<template>
+  <b-container fluid>
+    <b-row>
+      <b-col md="6" class="my-1">
+        <b-form-group class="mb-0">
+          <b-input-group>
+            <b-form-input v-model="loFilter" placeholder="Filtern"/>
+            <b-input-group-append>
+              <b-btn :disabled="!loFilter" @click="loFilter = ''">Löschen</b-btn>
+            </b-input-group-append>
+          </b-input-group>
+        </b-form-group>
+      </b-col>
+
+      <b-col md="6" class="my-1">
+        <slot name="filter"></slot>
+      </b-col>
+    </b-row>
+    <b-table
+      show-empty
+      fixed
+      empty-text="Keine Einträge vorhanden"
+      stacked="md"
+      :fields="fields"
+      :items="items"
+      :filter="loFilter"
+      :sort-by.sync="sortBy"
+      :sort-desc.sync="sortDesc"
+    >
+      <template slot="state" slot-scope="row">
+        <slot name="state" :row="row"></slot>
+      </template>
+      <template slot="row-details" slot-scope="row">
+        <slot name="row-details" :row="row"></slot>
+      </template>
+      <template v-slot:cell(actions)="row">
+        <slot name="actions" :row="row"></slot>
+      </template>
+    </b-table>
+  </b-container>
+</template>
+
+<script>
+  export default {
+    props: ['items', 'fields', 'filter'],
+    data () {
+      return {
+        loFilter: this.filter,
+        sortBy: "construction_number",
+        sortDesc: false
+      };
+    }
+  };
+</script>
+
